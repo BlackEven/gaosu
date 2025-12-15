@@ -439,6 +439,33 @@ input:focus {
   filter: saturate(0.85);
 }
 
+.feed-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.btn-mini {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.06);
+  color: rgba(255, 255, 255, 0.92);
+  border-radius: 999px;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.btn-mini--primary {
+  border-color: rgba(43, 209, 255, 0.6);
+  background: rgba(43, 209, 255, 0.16);
+}
+
+.btn-mini--danger {
+  border-color: rgba(255, 59, 59, 0.35);
+  background: rgba(255, 59, 59, 0.12);
+}
+
 .feed-item__top {
   display: flex;
   justify-content: space-between;

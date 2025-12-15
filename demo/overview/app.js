@@ -186,6 +186,30 @@
     return best;
   }
 
+  function distPointToSegmentXZ(p, a, b) {
+    const apx = p.x - a.x;
+    const apz = p.z - a.z;
+    const abx = b.x - a.x;
+    const abz = b.z - a.z;
+    const ab2 = abx * abx + abz * abz;
+    const t = clamp((apx * abx + apz * abz) / (ab2 || 1), 0, 1);
+    const cx = a.x + abx * t;
+    const cz = a.z + abz * t;
+    const dx = p.x - cx;
+    const dz = p.z - cz;
+    return Math.sqrt(dx * dx + dz * dz);
+  }
+
+  function distToPolygonEdgesXZ(p, poly) {
+    let best = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i];
+      const b = poly[(i + 1) % poly.length];
+      best = Math.min(best, distPointToSegmentXZ(p, a, b));
+    }
+    return best;
+  }
+
   function makeScene() {
     const highway = makeHighway();
 
@@ -242,6 +266,7 @@
         battery: 0.62,
         linkQuality: 0.91,
         speedMS: 12.1,
+        dir: 1,
         t01: 0.18,
         lastUpdateMs: nowMs(),
         track: [],
@@ -255,6 +280,7 @@
         battery: 0.88,
         linkQuality: 0.97,
         speedMS: 0,
+        dir: 0,
         t01: 0.02,
         lastUpdateMs: nowMs(),
         track: [],
@@ -334,15 +360,34 @@
     ];
   }
 
+  function getActiveAlerts() {
+    return state.timeMode === "replay" ? state.replayAlerts : scene.alerts;
+  }
+
+  function isAlertAcked(alert) {
+    if (state.timeMode === "replay") return state.replayAckIds.has(alert.alertId);
+    return Boolean(alert.ack);
+  }
+
+  function toggleAck(alert) {
+    if (state.timeMode === "replay") {
+      if (state.replayAckIds.has(alert.alertId)) state.replayAckIds.delete(alert.alertId);
+      else state.replayAckIds.add(alert.alertId);
+      return;
+    }
+    alert.ack = !alert.ack;
+  }
+
   function computeKpis(scene) {
     const airportsOnline = scene.airports.filter((a) => a.status === "online").length;
     const dronesExecuting = scene.drones.filter((d) => d.status === "executing").length;
     const dronesAvailable = scene.drones.filter((d) => d.status !== "lost").length;
-    const openAlerts = scene.alerts.filter((a) => !a.ack).length;
+    const activeAlerts = getActiveAlerts();
+    const openAlerts = activeAlerts.filter((a) => !isAlertAcked(a)).length;
 
-    const critical = scene.alerts.filter((a) => !a.ack && a.severity === "critical").length;
-    const warn = scene.alerts.filter((a) => !a.ack && a.severity === "warn").length;
-    const info = scene.alerts.filter((a) => !a.ack && a.severity === "info").length;
+    const critical = activeAlerts.filter((a) => !isAlertAcked(a) && a.severity === "critical").length;
+    const warn = activeAlerts.filter((a) => !isAlertAcked(a) && a.severity === "warn").length;
+    const info = activeAlerts.filter((a) => !isAlertAcked(a) && a.severity === "info").length;
 
     return { airportsOnline, dronesExecuting, dronesAvailable, openAlerts, critical, warn, info };
   }
@@ -432,6 +477,9 @@
     playing: true,
     replaySeconds: 600,
     replayCursorSec: 600,
+    scenarioStartMs: nowMs() - 600 * 1000,
+    replayAckIds: new Set(),
+    replayAlerts: [],
 
     selected: { type: null, id: null },
 
@@ -555,12 +603,13 @@
   function renderFeed() {
     ui.feedList.innerHTML = "";
     const items =
-      state.activeFeed === "alerts" ? scene.alerts : state.activeFeed === "tasks" ? scene.tasks : scene.assets;
+      state.activeFeed === "alerts" ? getActiveAlerts() : state.activeFeed === "tasks" ? scene.tasks : scene.assets;
 
     for (const it of items.slice(0, 24)) {
       const el = document.createElement("div");
-      el.className = "feed-item" + (state.activeFeed === "alerts" && it.ack ? " feed-item--acked" : "");
-      const timeMs = it.timeMs ?? it.timeMs ?? it.timeMs;
+      const acked = state.activeFeed === "alerts" ? isAlertAcked(it) : false;
+      el.className = "feed-item" + (acked ? " feed-item--acked" : "");
+      const timeMs = it.timeMs ?? nowMs();
       const title =
         state.activeFeed === "alerts"
           ? `${it.alertType}`
@@ -580,6 +629,18 @@
             ? `无人机：${it.droneId} / 航线：${it.routeId}`
             : "";
 
+      const actions =
+        state.activeFeed === "alerts"
+          ? `
+        <div class="feed-actions">
+          <button class="btn-mini btn-mini--primary" data-act="locate">定位</button>
+          <button class="btn-mini" data-act="cockpit">座舱</button>
+          <button class="btn-mini" data-act="return">建议返航</button>
+          <button class="btn-mini btn-mini--danger" data-act="ack">${acked ? "取消ACK" : "ACK"}</button>
+        </div>
+      `
+          : "";
+
       el.innerHTML = `
         <div class="feed-item__top">
           <div class="feed-item__title">${title}</div>
@@ -589,17 +650,11 @@
           </div>
         </div>
         <div class="feed-item__msg">${msg}</div>
+        ${actions}
       `;
 
-      el.addEventListener("click", (e) => {
+      el.addEventListener("click", () => {
         if (state.activeFeed === "alerts") {
-          // 演示：按住 Alt 点击 = 确认/取消确认（ACK）告警
-          if (e.altKey) {
-            it.ack = !it.ack;
-            updateHeaderKpis();
-            renderFeed();
-            return;
-          }
           const droneId = it.bind?.droneId;
           if (droneId) {
             selectObject("drone", droneId);
@@ -610,6 +665,35 @@
           focusOnDrone(it.droneId);
         }
       });
+
+      if (state.activeFeed === "alerts") {
+        el.querySelectorAll("button[data-act]").forEach((b) => {
+          b.addEventListener("click", (e) => {
+            e.stopPropagation();
+            const act = b.getAttribute("data-act");
+            const droneId = it.bind?.droneId;
+            if (act === "locate" && droneId) {
+              selectObject("drone", droneId);
+              focusOnDrone(droneId);
+            }
+            if (act === "cockpit") openCockpit();
+            if (act === "ack") {
+              toggleAck(it);
+              updateHeaderKpis();
+              renderFeed();
+            }
+            if (act === "return") {
+              // 演示：只在实时模式下改变无人机状态
+              if (state.timeMode !== "realtime" || !droneId) return;
+              const d = scene.drones.find((x) => x.droneId === droneId);
+              if (!d) return;
+              d.status = "returning";
+              d.dir = -1;
+              d.speedMS = Math.max(d.speedMS, 10);
+            }
+          });
+        });
+      }
 
       ui.feedList.appendChild(el);
     }
@@ -978,12 +1062,15 @@
       const r = scene.routes.find((x) => x.routeId === d.routeId);
       if (!r) continue;
 
-      if (d.status === "executing") {
+      if (d.status === "executing" || d.status === "returning") {
         const v = (d.speedMS || 10) / (polylineLength(r.points) || 1);
-        d.t01 = (d.t01 + v * dtSec) % 1;
+        const dir = d.status === "returning" ? -1 : d.dir || 1;
+        d.t01 = d.t01 + v * dtSec * dir;
+        if (d.t01 < 0) d.t01 = 0;
+        if (d.t01 > 1) d.t01 = d.t01 % 1;
 
         // slowly drain battery
-        d.battery = clamp(d.battery - dtSec * 0.00018, 0, 1);
+        d.battery = clamp(d.battery - dtSec * (d.status === "returning" ? 0.00014 : 0.00018), 0, 1);
         // link fluctuation
         d.linkQuality = clamp(d.linkQuality + (Math.random() - 0.5) * 0.01, 0.05, 1);
 
@@ -1009,7 +1096,7 @@
           genAlert(scene, d, "GEOFENCE_BREACH", "检测到越界进入禁飞区，请立即处置。", { type: "point", coords: [t.p.x, t.p.y, t.p.z] });
         } else if (!inside) {
           // near
-          const nearDist = distToPolylineXZ(t.p, scene.noFly.concat([scene.noFly[0]])); // cheap-ish
+          const nearDist = distToPolygonEdgesXZ(t.p, scene.noFly);
           if (nearDist < 90 && !scene.alerts.some((a) => !a.ack && a.alertType === "GEOFENCE_NEAR" && a.bind.droneId === d.droneId)) {
             genAlert(scene, d, "GEOFENCE_NEAR", "接近禁飞区边界（<90m），建议调整航向。", { type: "point", coords: [t.p.x, t.p.y, t.p.z] });
           }
@@ -1024,6 +1111,13 @@
         // idle
         d.linkQuality = clamp(d.linkQuality + (Math.random() - 0.5) * 0.005, 0.5, 1);
         d.battery = clamp(d.battery + dtSec * 0.00008, 0, 1);
+      }
+
+      // simple landing when returned to start
+      if (d.status === "returning" && d.t01 <= 0.001) {
+        d.status = "idle";
+        d.dir = 0;
+        d.speedMS = 0;
       }
     }
 
@@ -1045,6 +1139,121 @@
     }
 
     renderFeed();
+  }
+
+  function updateReplay(simTimeMs) {
+    // 在回放模式下：按时间轴“推导”无人机位置/电量/链路/航迹，并生成可复现的告警集合
+    const elapsedSec = (simTimeMs - state.scenarioStartMs) / 1000;
+    const d1 = scene.drones.find((x) => x.droneId === "d-01");
+    const d2 = scene.drones.find((x) => x.droneId === "d-02");
+    const activeRouteId = ui.routeSelect.value || "r-03";
+    const r1 = scene.routes.find((x) => x.routeId === activeRouteId);
+    if (!d1 || !d2 || !r1) return;
+
+    // 固定为执行态，便于复盘；真实系统可按任务phase回放
+    d1.status = "executing";
+    d1.routeId = activeRouteId;
+    d1.dir = 1;
+    d1.speedMS = 12.1;
+
+    const L = polylineLength(r1.points) || 1;
+    const baseT = 0.18;
+    d1.t01 = (baseT + (elapsedSec * d1.speedMS) / L) % 1;
+    d1.battery = clamp(0.62 - elapsedSec * 0.00018, 0, 1);
+    d1.linkQuality = clamp(0.86 + Math.sin(elapsedSec * 0.22) * 0.10, 0.05, 1);
+
+    // d2 idle near airport
+    d2.status = "idle";
+    d2.speedMS = 0;
+    d2.linkQuality = clamp(0.92 + Math.cos(elapsedSec * 0.18) * 0.04, 0.5, 1);
+    d2.battery = clamp(0.88 + Math.sin(elapsedSec * 0.1) * 0.02, 0, 1);
+
+    // rebuild track for last 5 minutes (step 5s)
+    const keepSec = 5 * 60;
+    const pts = [];
+    for (let s = Math.max(0, elapsedSec - keepSec); s <= elapsedSec; s += 5) {
+      const t01 = (baseT + (s * d1.speedMS) / L) % 1;
+      pts.push({ timeMs: state.scenarioStartMs + s * 1000, t01 });
+    }
+    d1.track = pts;
+
+    // alerts derived from current replay moment (persist once thresholds met)
+    const t = pointOnPolyline(r1.points, d1.t01);
+    const inside = pointInPolyXZ(t.p, scene.noFly);
+    const dist = distToPolygonEdgesXZ(t.p, scene.noFly);
+
+    const alerts = [];
+    alerts.push({
+      alertId: "replay-DEVIATION",
+      timeMs: state.scenarioStartMs + 120 * 1000,
+      alertType: "DEVIATION",
+      severity: "warn",
+      message: "航迹轻微偏离走廊（回放演示）。",
+      bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+      location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+    });
+
+    if (dist < 90 && !inside) {
+      alerts.push({
+        alertId: "replay-GEOFENCE_NEAR",
+        timeMs: state.scenarioStartMs + 240 * 1000,
+        alertType: "GEOFENCE_NEAR",
+        severity: "warn",
+        message: "接近禁飞区边界（<90m）（回放演示）。",
+        bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+        location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+      });
+    }
+
+    if (inside) {
+      alerts.push({
+        alertId: "replay-GEOFENCE_BREACH",
+        timeMs: state.scenarioStartMs + 300 * 1000,
+        alertType: "GEOFENCE_BREACH",
+        severity: "critical",
+        message: "检测到越界进入禁飞区（回放演示）。",
+        bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+        location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+      });
+    }
+
+    if (d1.battery < 0.25) {
+      alerts.push({
+        alertId: "replay-LOW_BATTERY",
+        timeMs: state.scenarioStartMs + 360 * 1000,
+        alertType: "LOW_BATTERY",
+        severity: "warn",
+        message: "电量低于25%，建议评估返航（回放演示）。",
+        bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+        location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+      });
+    }
+
+    if (d1.battery < 0.15) {
+      alerts.push({
+        alertId: "replay-CRITICAL_BATTERY",
+        timeMs: state.scenarioStartMs + 480 * 1000,
+        alertType: "CRITICAL_BATTERY",
+        severity: "critical",
+        message: "电量低于15%，建议立即返航（回放演示）。",
+        bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+        location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+      });
+    }
+
+    if (d1.linkQuality < 0.35) {
+      alerts.push({
+        alertId: "replay-LINK_DEGRADED",
+        timeMs: state.scenarioStartMs + 420 * 1000,
+        alertType: "LINK_DEGRADED",
+        severity: "warn",
+        message: "链路质量偏低（回放演示）。",
+        bind: { droneId: "d-01", airportId: "a-01", routeId: activeRouteId },
+        location: { type: "point", coords: [t.p.x, t.p.y, t.p.z] },
+      });
+    }
+
+    state.replayAlerts = alerts.sort((a, b) => b.timeMs - a.timeMs);
   }
 
   function applyFollow() {
@@ -1370,7 +1579,9 @@
       ctx.fillText(tag, s.x + 10 * devicePixelRatio, s.y + 18 * devicePixelRatio);
 
       // red pulse when critical alert
-      const hasCritical = scene.alerts.some((a) => !a.ack && a.bind.droneId === d.droneId && a.severity === "critical");
+      const hasCritical = getActiveAlerts().some(
+        (a) => !isAlertAcked(a) && a.bind.droneId === d.droneId && a.severity === "critical",
+      );
       if (hasCritical) {
         const pulse = (Math.sin(nowMs() / 180) + 1) / 2;
         ctx.strokeStyle = `rgba(255,59,59,${0.35 + 0.35 * pulse})`;
@@ -1388,7 +1599,7 @@
 
   function drawAlertsOnMap(ctx, cam, viewport) {
     // small markers for unacked alerts
-    const items = scene.alerts.filter((a) => !a.ack).slice(0, 18);
+    const items = getActiveAlerts().filter((a) => !isAlertAcked(a)).slice(0, 18);
     for (const a of items) {
       const droneId = a.bind?.droneId;
       const d = droneId ? scene.drones.find((x) => x.droneId === droneId) : null;
@@ -1540,7 +1751,7 @@
     ui.hudEta.textContent = `${eta} min`;
 
     // Strong warning
-    const critical = scene.alerts.find((a) => !a.ack && a.bind.droneId === d.droneId && a.severity === "critical");
+    const critical = getActiveAlerts().find((a) => !isAlertAcked(a) && a.bind.droneId === d.droneId && a.severity === "critical");
     if (critical) {
       ui.hudWarning.textContent = `${critical.alertType}：${critical.message}`;
       ui.hudWarning.classList.remove("hud__warning--hidden");
@@ -1583,6 +1794,18 @@
 
     ui.routeSelect.addEventListener("change", () => {
       selectObject("route", ui.routeSelect.value);
+      // 演示：切换“执行航线”（实时下让无人机-01改飞该航线）
+      if (state.timeMode === "realtime") {
+        const d = scene.drones.find((x) => x.droneId === "d-01");
+        if (d) {
+          d.routeId = ui.routeSelect.value;
+          d.status = "executing";
+          d.dir = 1;
+          d.t01 = 0.02;
+          d.speedMS = Math.max(d.speedMS, 10);
+          d.track = [];
+        }
+      }
     });
 
     ui.tabAlerts.addEventListener("click", () => setActiveFeed("alerts"));
@@ -1697,12 +1920,13 @@
       }
       ui.timeText.textContent = `回放：${Math.round(state.replayCursorSec)}s`;
 
-      // Sim time = now - (replaySeconds - cursor)
-      simTimeMs = tMs - (state.replaySeconds - state.replayCursorSec) * 1000;
+      // Sim time = scenarioStart + cursor
+      simTimeMs = state.scenarioStartMs + state.replayCursorSec * 1000;
     }
 
     applyFollow();
-    updateSimulation(dtSec * state.speed, simTimeMs);
+    if (state.timeMode === "realtime") updateSimulation(dtSec * state.speed, simTimeMs);
+    else updateReplay(simTimeMs);
     updateHeaderKpis();
     renderMap();
     tickLive();
