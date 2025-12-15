@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>高速公路建设工程无人机巡检监督可视化大屏（演示）</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app">
+      <header class="topbar">
+        <div class="topbar__left">
+          <div class="brand">
+            <div class="brand__title">高速公路建设工程无人机巡检监督可视化大屏</div>
+            <div class="brand__subtitle">综合态势（演示）</div>
+          </div>
+        </div>
+
+        <div class="topbar__center">
+          <div class="global-filters">
+            <div class="field">
+              <label>标段</label>
+              <select id="sectionSelect"></select>
+            </div>
+            <div class="field">
+              <label>航线</label>
+              <select id="routeSelect"></select>
+            </div>
+            <div class="field">
+              <label>模式</label>
+              <div class="seg">
+                <button id="modeRealtimeBtn" class="seg__btn seg__btn--active" type="button">实时</button>
+                <button id="modeReplayBtn" class="seg__btn" type="button">回放</button>
+              </div>
+            </div>
+            <div class="field">
+              <label>搜索</label>
+              <input id="searchInput" placeholder="机场/无人机/航线" />
+            </div>
+          </div>
+        </div>
+
+        <div class="topbar__right">
+          <div class="status">
+            <div class="status__item">
+              <div class="status__label">天气</div>
+              <div id="weatherText" class="status__value">晴 22℃ / 风 3.2m/s</div>
+            </div>
+            <div class="status__item">
+              <div class="status__label">告警</div>
+              <div class="status__value">
+                <span class="pill pill--red">红 <span id="alertCriticalCount">0</span></span>
+                <span class="pill pill--orange">橙 <span id="alertWarnCount">0</span></span>
+                <span class="pill pill--yellow">黄 <span id="alertInfoCount">0</span></span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main class="main">
+        <aside class="left">
+          <div class="panel">
+            <div class="panel__title">模块</div>
+            <div class="module-list">
+              <button class="module module--active" type="button">综合态势</button>
+              <button class="module" type="button" disabled>工程进度</button>
+              <button class="module" type="button" disabled>工程安全</button>
+              <button class="module" type="button" disabled>工程合规</button>
+              <button class="module" type="button" disabled>工程监督</button>
+              <button class="module" type="button" disabled>工程质量</button>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel__title">图层与视图</div>
+            <div class="form">
+              <label class="check">
+                <input id="layerAirports" type="checkbox" checked />
+                <span>无人机机场（位置/状态/覆盖）</span>
+              </label>
+              <label class="check">
+                <input id="layerDrones" type="checkbox" checked />
+                <span>无人机（实时位置/状态）</span>
+              </label>
+              <label class="check">
+                <input id="layerRoutes" type="checkbox" checked />
+                <span>航线（可切换）</span>
+              </label>
+              <label class="check">
+                <input id="layerTracks" type="checkbox" checked />
+                <span>航迹（近5分钟）</span>
+              </label>
+              <label class="check">
+                <input id="layerNoFly" type="checkbox" />
+                <span>禁飞/限飞（演示）</span>
+              </label>
+              <div class="divider"></div>
+              <div class="field">
+                <label>视图模式</label>
+                <select id="viewModeSelect">
+                  <option value="free">自由</option>
+                  <option value="topdown">俯视</option>
+                  <option value="followDrone">跟随无人机</option>
+                  <option value="followRoute">跟随航线</option>
+                  <option value="cockpit">虚拟座舱</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>航线样式</label>
+                <select id="routeStyleSelect">
+                  <option value="corridor">走廊带</option>
+                  <option value="line">中心线</option>
+                  <option value="both">走廊+中心线</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>告警强提示</label>
+                <select id="focusPolicySelect">
+                  <option value="on">开启（建议）</option>
+                  <option value="off">关闭</option>
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel__title">快捷操作</div>
+            <div class="btn-row">
+              <button id="btnLocateDrone" class="btn" type="button">定位无人机</button>
+              <button id="btnLocateAirport" class="btn" type="button">定位机场</button>
+            </div>
+            <div class="btn-row">
+              <button id="btnToggleLive" class="btn btn--primary" type="button">打开多屏直播</button>
+              <button id="btnEnterCockpit" class="btn" type="button">进入座舱</button>
+            </div>
+          </div>
+        </aside>
+
+        <section class="center">
+          <div class="map-wrap">
+            <canvas id="mapCanvas" class="map"></canvas>
+
+            <div class="map-hud">
+              <div class="map-hud__left">
+                <div class="legend">
+                  <div class="legend__title">图例</div>
+                  <div class="legend__row"><span class="dot dot--green"></span>在线机场</div>
+                  <div class="legend__row"><span class="dot dot--gray"></span>离线/维护</div>
+                  <div class="legend__row"><span class="dot dot--cyan"></span>无人机（执行中）</div>
+                  <div class="legend__row"><span class="dot dot--blue"></span>无人机（待命/返航）</div>
+                  <div class="legend__row"><span class="dot dot--red"></span>强告警</div>
+                </div>
+              </div>
+
+              <div class="map-hud__right">
+                <div class="mini">
+                  <div class="mini__title">相机</div>
+                  <div class="mini__row">拖拽：平移 / 右键：旋转 / 滚轮：缩放</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <aside class="right">
+          <div class="panel">
+            <div class="panel__title">关键指标</div>
+            <div class="kpi-grid">
+              <div class="kpi">
+                <div class="kpi__label">在线机场</div>
+                <div id="kpiAirportsOnline" class="kpi__value">-</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi__label">可用无人机</div>
+                <div id="kpiDronesAvailable" class="kpi__value">-</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi__label">执行中</div>
+                <div id="kpiDronesExecuting" class="kpi__value">-</div>
+              </div>
+              <div class="kpi">
+                <div class="kpi__label">异常</div>
+                <div id="kpiAlertsOpen" class="kpi__value">-</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="panel">
+            <div class="panel__title">信息流</div>
+            <div class="tabs">
+              <button id="tabAlerts" class="tab tab--active" type="button">告警</button>
+              <button id="tabTasks" class="tab" type="button">任务</button>
+              <button id="tabAssets" class="tab" type="button">设备</button>
+            </div>
+            <div class="feed" id="feedList"></div>
+          </div>
+
+          <div class="panel">
+            <div class="panel__title">详情</div>
+            <div id="detailPanel" class="detail">
+              <div class="detail__empty">点击地图上的机场/无人机/航线查看详情</div>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      <footer class="timeline">
+        <div class="timeline__left">
+          <button id="playBtn" class="btn btn--primary" type="button">播放</button>
+          <button id="pauseBtn" class="btn" type="button" disabled>暂停</button>
+          <div class="speed">
+            <label>倍速</label>
+            <select id="speedSelect">
+              <option value="1">1x</option>
+              <option value="2">2x</option>
+              <option value="4">4x</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="timeline__center">
+          <input id="timeSlider" type="range" min="0" max="600" value="600" />
+          <div class="timeline__meta">
+            <div id="timeText" class="time-text">--</div>
+            <div id="modeHint" class="mode-hint">实时：锁定当前</div>
+          </div>
+        </div>
+
+        <div class="timeline__right">
+          <button id="btnSnapshot" class="btn" type="button">截图</button>
+          <button id="btnResetView" class="btn" type="button">重置视角</button>
+        </div>
+      </footer>
+    </div>
+
+    <div id="liveOverlay" class="overlay overlay--hidden" role="dialog" aria-modal="true">
+      <div class="overlay__content">
+        <div class="overlay__header">
+          <div class="overlay__title">多屏直播（演示：模拟画面）</div>
+          <div class="overlay__actions">
+            <button id="liveLayout2" class="btn" type="button">2分屏</button>
+            <button id="liveLayout4" class="btn btn--primary" type="button">4分屏</button>
+            <button id="liveLayout6" class="btn" type="button">6分屏</button>
+            <button id="closeLive" class="btn" type="button">关闭</button>
+          </div>
+        </div>
+        <div id="liveGrid" class="live-grid live-grid--4"></div>
+        <div class="overlay__footer">提示：点击任意画面可“置顶”，并联动地图定位（若该画面绑定无人机/机场）。</div>
+      </div>
+    </div>
+
+    <div id="cockpitOverlay" class="overlay overlay--hidden" role="dialog" aria-modal="true">
+      <div class="overlay__content overlay__content--full">
+        <div class="overlay__header">
+          <div class="overlay__title">虚拟座舱（演示）</div>
+          <div class="overlay__actions">
+            <button id="cockpitSwitchView" class="btn" type="button">切换视角</button>
+            <button id="closeCockpit" class="btn" type="button">退出</button>
+          </div>
+        </div>
+
+        <div class="cockpit">
+          <canvas id="cockpitCanvas" class="cockpit__canvas"></canvas>
+          <div class="hud">
+            <div class="hud__top">
+              <div>
+                <div id="hudTitle" class="hud__title">-</div>
+                <div id="hudSub" class="hud__sub">-</div>
+              </div>
+              <div class="hud__status">
+                <div class="hud__meter">
+                  <div class="hud__meter-label">电量</div>
+                  <div class="hud__bar"><div id="hudBattery" class="hud__bar-fill"></div></div>
+                </div>
+                <div class="hud__meter">
+                  <div class="hud__meter-label">链路</div>
+                  <div class="hud__bar"><div id="hudLink" class="hud__bar-fill hud__bar-fill--link"></div></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="hud__center">
+              <div class="reticle"></div>
+              <div id="hudWarning" class="hud__warning hud__warning--hidden"></div>
+            </div>
+
+            <div class="hud__bottom">
+              <div class="hud__kv">
+                <div class="hud__k">速度</div>
+                <div id="hudSpeed" class="hud__v">-</div>
+              </div>
+              <div class="hud__kv">
+                <div class="hud__k">高度</div>
+                <div id="hudAlt" class="hud__v">-</div>
+              </div>
+              <div class="hud__kv">
+                <div class="hud__k">航向</div>
+                <div id="hudHeading" class="hud__v">-</div>
+              </div>
+              <div class="hud__kv">
+                <div class="hud__k">航点</div>
+                <div id="hudWp" class="hud__v">-</div>
+              </div>
+              <div class="hud__kv">
+                <div class="hud__k">ETA</div>
+                <div id="hudEta" class="hud__v">-</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="overlay__footer">
+          强告警（低电/失联/越界）将自动置顶提示并建议“返航/定位/进入座舱”。
+        </div>
+      </div>
+    </div>
+
+    <script src="./app.js"></script>
+  </body>
+</html>
